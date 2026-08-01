@@ -45,6 +45,7 @@ done
 
 SKILLS_DIR="$SELECTED_CODEX_HOME/skills"
 DESTINATION="$SKILLS_DIR/computer-use-watchdog"
+BACKUP_ROOT="$SELECTED_CODEX_HOME/skill-backups"
 
 if [ "$DRY_RUN" -eq 1 ]; then
   printf 'Would install %s to %s\n' "$SOURCE_SKILL_DIR" "$DESTINATION"
@@ -78,7 +79,8 @@ chmod +x "$STAGE_DIR/scripts/computer-use-watchdog" \
 }
 
 if [ -e "$DESTINATION" ]; then
-  BACKUP_DIR="$SKILLS_DIR/computer-use-watchdog.backup.$(date -u '+%Y%m%dT%H%M%SZ')"
+  mkdir -p "$BACKUP_ROOT"
+  BACKUP_DIR="$BACKUP_ROOT/computer-use-watchdog.$(date -u '+%Y%m%dT%H%M%SZ')"
   mv "$DESTINATION" "$BACKUP_DIR"
 fi
 

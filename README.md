@@ -58,7 +58,7 @@ $skill-installer を使って https://github.com/<owner>/codex-computer-use-watc
 ./install.sh --force
 ```
 
-`--force` は既存スキルを同じ `skills` ディレクトリ内へバックアップしてから更新します。
+`--force` は既存スキルを `$CODEX_HOME/skill-backups` へバックアップしてから更新します。バックアップをスキル検索対象から分離するため、古い版が重複検出されません。
 
 ## スケジューラを作成する
 
