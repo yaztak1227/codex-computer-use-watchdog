@@ -22,16 +22,16 @@ macOS版CodexのComputer Use補助プロセス `SkyComputerUseService` が、利
 
 ## Codexのskill-installerで導入する
 
-Codexに次のように依頼します。`<owner>` は、このGitHubリポジトリの所有者名に置き換えてください。
+Codexに次のように依頼します。
 
 ```text
-$skill-installer を使って、GitHubリポジトリ <owner>/codex-computer-use-watchdog の skills/computer-use-watchdog をインストールして
+$skill-installer を使って、GitHubリポジトリ yaztak1227/codex-computer-use-watchdog の skills/computer-use-watchdog をインストールして
 ```
 
 またはGitHub URLを直接指定できます。
 
 ```text
-$skill-installer を使って https://github.com/<owner>/codex-computer-use-watchdog/tree/main/skills/computer-use-watchdog をインストールして
+$skill-installer を使って https://github.com/yaztak1227/codex-computer-use-watchdog/tree/main/skills/computer-use-watchdog をインストールして
 ```
 
 インストール完了後、次のターンからスキルが利用できます。必要に応じてCodexを再起動してください。
