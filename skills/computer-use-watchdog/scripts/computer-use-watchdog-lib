@@ -1,0 +1,148 @@
+#!/bin/bash
+
+watchdog_initialize() {
+  WATCHDOG_USER_NAME="$(id -un)"
+  WATCHDOG_USER_ID="$(id -u)"
+  WATCHDOG_USER_DIR="$(dscacheutil -q user -a name "$WATCHDOG_USER_NAME" | awk '/^dir:/{print $2; exit}')"
+  if [ -z "$WATCHDOG_USER_DIR" ]; then
+    WATCHDOG_USER_DIR="$(printenv HOME)"
+  fi
+
+  WATCHDOG_MIN_AGE="${CU_WATCHDOG_MIN_AGE_SECONDS:-60}"
+  WATCHDOG_RECHECK_DELAY="${CU_WATCHDOG_RECHECK_DELAY_SECONDS:-60}"
+  WATCHDOG_MIN_CPU="${CU_WATCHDOG_MIN_CPU:-2.0}"
+  WATCHDOG_STATE_DIR="${CU_WATCHDOG_STATE_DIR:-$WATCHDOG_USER_DIR/Library/Application Support/Codex Computer Use Watchdog}"
+  WATCHDOG_LOG_FILE="$WATCHDOG_STATE_DIR/watchdog.log"
+  WATCHDOG_WORKER_OUTPUT="$WATCHDOG_STATE_DIR/recheck-output.log"
+  WATCHDOG_WORKER_ERROR="$WATCHDOG_STATE_DIR/recheck-error.log"
+  WATCHDOG_EXPECTED_BUNDLE_ID="com.openai.sky.CUAService"
+  WATCHDOG_EXPECTED_TEAM_ID="2DC432GLL2"
+  WATCHDOG_EXPECTED_EXECUTABLE="SkyComputerUseService"
+  WATCHDOG_EXPECTED_SOCKET="$WATCHDOG_USER_DIR/Library/Group Containers/2DC432GLL2.com.openai.sky.CUAService/IPC/computeruse.sock"
+
+  watchdog_is_number "$WATCHDOG_MIN_AGE" || return 1
+  watchdog_is_number "$WATCHDOG_RECHECK_DELAY" || return 1
+  watchdog_is_number "$WATCHDOG_MIN_CPU" || return 1
+}
+
+watchdog_is_number() {
+  awk -v value="$1" 'BEGIN { exit !(value ~ /^[0-9]+([.][0-9]+)?$/) }'
+}
+
+watchdog_etime_to_seconds() {
+  local raw="$1" days=0 hours=0 minutes=0 seconds=0 rest
+  raw="${raw//[[:space:]]/}"
+  if [[ "$raw" == *-* ]]; then
+    days="${raw%%-*}"
+    rest="${raw#*-}"
+  else
+    rest="$raw"
+  fi
+  IFS=: read -r -a parts <<< "$rest"
+  case "${#parts[@]}" in
+    3) hours="${parts[0]}"; minutes="${parts[1]}"; seconds="${parts[2]}" ;;
+    2) minutes="${parts[0]}"; seconds="${parts[1]}" ;;
+    *) return 1 ;;
+  esac
+  printf '%s\n' "$((10#$days * 86400 + 10#$hours * 3600 + 10#$minutes * 60 + 10#$seconds))"
+}
+
+watchdog_log_event() {
+  mkdir -p "$WATCHDOG_STATE_DIR"
+  printf '%s\t%s\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$1" >> "$WATCHDOG_LOG_FILE"
+}
+
+watchdog_find_service_pids() {
+  ps -axo pid=,uid=,command= | awk -v uid="$WATCHDOG_USER_ID" '
+    $2 == uid && $0 ~ /\/\.codex/ && $0 ~ /\/computer-use\/Codex Computer Use\.app\/Contents\/MacOS\/SkyComputerUseService$/ { print $1 }
+  '
+}
+
+watchdog_service_path_for_pid() {
+  ps -p "$1" -o command= | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'
+}
+
+watchdog_validate_identity() {
+  local pid="$1" service_path bundle_path signature bundle_id team_id owner_uid
+  service_path="$(watchdog_service_path_for_pid "$pid")"
+  case "$service_path" in
+    "$WATCHDOG_USER_DIR"/.codex*/computer-use/'Codex Computer Use.app'/Contents/MacOS/SkyComputerUseService) ;;
+    *) return 1 ;;
+  esac
+  [ "$(basename "$service_path")" = "$WATCHDOG_EXPECTED_EXECUTABLE" ] || return 1
+  owner_uid="$(ps -p "$pid" -o uid= | tr -d ' ')"
+  [ "$owner_uid" = "$WATCHDOG_USER_ID" ] || return 1
+  bundle_path="${service_path%/Contents/MacOS/$WATCHDOG_EXPECTED_EXECUTABLE}"
+  [ -f "$bundle_path/Contents/Info.plist" ] || return 1
+  bundle_id="$(plutil -extract CFBundleIdentifier raw -o - "$bundle_path/Contents/Info.plist" 2>/dev/null)"
+  [ "$bundle_id" = "$WATCHDOG_EXPECTED_BUNDLE_ID" ] || return 1
+  signature="$(codesign -dv --verbose=2 "$bundle_path" 2>&1)"
+  team_id="$(printf '%s\n' "$signature" | awk -F= '/^TeamIdentifier=/{print $2; exit}')"
+  [ "$team_id" = "$WATCHDOG_EXPECTED_TEAM_ID" ] || return 1
+  printf '%s\n' "$service_path"
+}
+
+watchdog_active_client_count() {
+  local pid="$1"
+  lsof -nP -U 2>/dev/null | awk -v pid="$pid" -v socket="$WATCHDOG_EXPECTED_SOCKET" '
+    index($0, socket) && $2 != pid { count++ }
+    END { print count + 0 }
+  '
+}
+
+watchdog_child_count() {
+  ps -axo ppid= | awk -v pid="$1" '$1 == pid { count++ } END { print count + 0 }'
+}
+
+watchdog_sample_cpu() {
+  local pid="$1" i value sum=0 count=0
+  for i in 1 2 3; do
+    value="$(ps -p "$pid" -o %cpu= 2>/dev/null | tr -d ' ')"
+    if watchdog_is_number "$value"; then
+      sum="$(awk -v a="$sum" -v b="$value" 'BEGIN { printf "%.3f", a + b }')"
+      count=$((count + 1))
+    fi
+    [ "$i" -eq 3 ] || sleep 1
+  done
+  [ "$count" -gt 0 ] || return 1
+  awk -v sum="$sum" -v count="$count" 'BEGIN { printf "%.2f\n", sum / count }'
+}
+
+watchdog_evaluate_pid() {
+  local pid="$1" service_path elapsed_raw age_seconds clients children avg_cpu
+  service_path="$(watchdog_validate_identity "$pid")" || {
+    printf 'status=skipped pid=%s reason=identity-mismatch\n' "$pid"
+    return 2
+  }
+  elapsed_raw="$(ps -p "$pid" -o etime= 2>/dev/null)"
+  age_seconds="$(watchdog_etime_to_seconds "$elapsed_raw")" || {
+    printf 'status=skipped pid=%s reason=age-unavailable\n' "$pid"
+    return 2
+  }
+  clients="$(watchdog_active_client_count "$pid")"
+  children="$(watchdog_child_count "$pid")"
+  avg_cpu="$(watchdog_sample_cpu "$pid")" || {
+    printf 'status=skipped pid=%s reason=cpu-unavailable\n' "$pid"
+    return 2
+  }
+
+  if [ "$clients" -gt 0 ]; then
+    printf 'status=healthy pid=%s reason=client-connected clients=%s cpu=%s age=%s\n' "$pid" "$clients" "$avg_cpu" "$age_seconds"
+    return 1
+  fi
+  if [ "$children" -gt 0 ]; then
+    printf 'status=healthy pid=%s reason=children-present children=%s cpu=%s age=%s\n' "$pid" "$children" "$avg_cpu" "$age_seconds"
+    return 1
+  fi
+  if awk -v age="$age_seconds" -v minimum="$WATCHDOG_MIN_AGE" 'BEGIN { exit !(age < minimum) }'; then
+    printf 'status=healthy pid=%s reason=too-young cpu=%s age=%s\n' "$pid" "$avg_cpu" "$age_seconds"
+    return 1
+  fi
+  if awk -v cpu="$avg_cpu" -v minimum="$WATCHDOG_MIN_CPU" 'BEGIN { exit !(cpu < minimum) }'; then
+    printf 'status=healthy pid=%s reason=low-cpu cpu=%s age=%s\n' "$pid" "$avg_cpu" "$age_seconds"
+    return 1
+  fi
+
+  printf 'status=eligible pid=%s cpu=%s age=%s clients=0 children=0 path=%q\n' "$pid" "$avg_cpu" "$age_seconds" "$service_path"
+  return 0
+}

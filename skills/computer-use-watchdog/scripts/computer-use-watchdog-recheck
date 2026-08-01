@@ -1,0 +1,144 @@
+#!/bin/bash
+set -u
+set -o pipefail
+
+if [ "$#" -ne 3 ]; then
+  printf 'status=error reason=usage expected="snapshot-file delay-seconds launchd-label"\n' >&2
+  exit 64
+fi
+
+SNAPSHOT_FILE="$1"
+RECHECK_DELAY="$2"
+LAUNCHD_LABEL="$3"
+WATCHDOG_SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
+# shellcheck source=computer-use-watchdog-lib
+source "$WATCHDOG_SCRIPT_DIR/computer-use-watchdog-lib"
+watchdog_initialize || {
+  printf 'status=error reason=invalid-configuration\n' >&2
+  exit 65
+}
+
+watchdog_is_number "$RECHECK_DELAY" || {
+  printf 'status=error reason=invalid-delay\n' >&2
+  exit 65
+}
+case "$SNAPSHOT_FILE" in
+  "$WATCHDOG_STATE_DIR"/recheck-batch-*.tsv) ;;
+  *)
+    printf 'status=error reason=invalid-snapshot-path\n' >&2
+    exit 65
+    ;;
+esac
+[ -f "$SNAPSHOT_FILE" ] || {
+  printf 'status=error reason=snapshot-missing\n' >&2
+  exit 66
+}
+
+STATE_FILE="$WATCHDOG_STATE_DIR/recheck-worker.tsv"
+WAIT_PIPE=""
+cleanup_batch_state() {
+  local recorded_label=""
+  if [ -f "$STATE_FILE" ]; then
+    IFS=$'\t' read -r recorded_label _ < "$STATE_FILE" || true
+    [ "$recorded_label" = "$LAUNCHD_LABEL" ] && rm -f "$STATE_FILE"
+  fi
+  [ -n "$WAIT_PIPE" ] && [ -p "$WAIT_PIPE" ] && rm -f "$WAIT_PIPE"
+  [ -f "$SNAPSHOT_FILE" ] && rm -f "$SNAPSHOT_FILE"
+  launchctl remove "$LAUNCHD_LABEL" >/dev/null 2>&1 || true
+}
+trap cleanup_batch_state EXIT
+
+# Wait inside this one Bash process; do not create a separate sleep process.
+WAIT_PIPE="$WATCHDOG_STATE_DIR/recheck-wait-$$.fifo"
+mkfifo "$WAIT_PIPE" || {
+  printf 'status=error reason=wait-pipe-create-failed\n' >&2
+  exit 67
+}
+exec 9<> "$WAIT_PIPE"
+rm -f "$WAIT_PIPE"
+WAIT_PIPE=""
+IFS= read -r -t "$RECHECK_DELAY" -u 9 _ || true
+exec 9>&-
+
+checked=0
+terminated=0
+aborted=0
+errors=0
+target_is_running() {
+  local target_state
+  target_state="$(ps -p "$1" -o state= 2>/dev/null | tr -d ' ')"
+  [ -n "$target_state" ] && [[ "$target_state" != Z* ]]
+}
+
+while IFS=$'\t' read -r target_pid expected_path; do
+  [ -n "$target_pid" ] || continue
+  checked=$((checked + 1))
+  if ! [[ "$target_pid" =~ ^[0-9]+$ ]]; then
+    printf 'status=aborted pid=%s reason=invalid-pid\n' "$target_pid"
+    watchdog_log_event "status=aborted pid=$target_pid reason=invalid-pid"
+    aborted=$((aborted + 1))
+    continue
+  fi
+
+  current_path="$(watchdog_validate_identity "$target_pid")" || {
+    printf 'status=aborted pid=%s reason=process-or-identity-changed\n' "$target_pid"
+    watchdog_log_event "status=aborted pid=$target_pid reason=process-or-identity-changed"
+    aborted=$((aborted + 1))
+    continue
+  }
+  if [ "$current_path" != "$expected_path" ]; then
+    printf 'status=aborted pid=%s reason=path-changed\n' "$target_pid"
+    watchdog_log_event "status=aborted pid=$target_pid reason=path-changed"
+    aborted=$((aborted + 1))
+    continue
+  fi
+
+  evaluation="$(watchdog_evaluate_pid "$target_pid")"
+  result=$?
+  printf '%s\n' "$evaluation"
+  if [ "$result" -ne 0 ]; then
+    watchdog_log_event "status=aborted pid=$target_pid reason=no-longer-eligible"
+    aborted=$((aborted + 1))
+    continue
+  fi
+
+  final_clients="$(watchdog_active_client_count "$target_pid")"
+  if [ "$final_clients" -gt 0 ]; then
+    printf 'status=aborted pid=%s reason=client-connected clients=%s\n' "$target_pid" "$final_clients"
+    watchdog_log_event "status=aborted pid=$target_pid reason=client-connected clients=$final_clients"
+    aborted=$((aborted + 1))
+    continue
+  fi
+
+  if ! kill -TERM "$target_pid" 2>/dev/null; then
+    printf 'status=error pid=%s reason=term-failed\n' "$target_pid" >&2
+    watchdog_log_event "status=error pid=$target_pid reason=term-failed"
+    errors=$((errors + 1))
+    continue
+  fi
+
+  for _ in 1 2 3 4 5; do
+    target_is_running "$target_pid" || break
+    sleep 1
+  done
+  if target_is_running "$target_pid"; then
+    printf 'status=term-timeout pid=%s action=no-force-kill\n' "$target_pid"
+    watchdog_log_event "status=term-timeout pid=$target_pid action=no-force-kill"
+    errors=$((errors + 1))
+    continue
+  fi
+
+  final_state="$(ps -p "$target_pid" -o state= 2>/dev/null | tr -d ' ')"
+  if [[ "$final_state" == Z* ]]; then
+    printf 'status=terminated pid=%s signal=TERM reap=pending\n' "$target_pid"
+    watchdog_log_event "status=terminated pid=$target_pid signal=TERM reap=pending"
+  else
+    printf 'status=terminated pid=%s signal=TERM\n' "$target_pid"
+    watchdog_log_event "status=terminated pid=$target_pid signal=TERM"
+  fi
+  terminated=$((terminated + 1))
+done < "$SNAPSHOT_FILE"
+
+printf 'status=batch-complete checked=%s terminated=%s aborted=%s errors=%s\n' "$checked" "$terminated" "$aborted" "$errors"
+watchdog_log_event "status=batch-complete checked=$checked terminated=$terminated aborted=$aborted errors=$errors"
+[ "$errors" -eq 0 ]

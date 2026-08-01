@@ -1,0 +1,118 @@
+#!/bin/bash
+set -u
+set -o pipefail
+
+WATCHDOG_SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd -P)"
+# shellcheck source=computer-use-watchdog-lib
+source "$WATCHDOG_SCRIPT_DIR/computer-use-watchdog-lib"
+watchdog_initialize || {
+  printf 'status=error reason=invalid-configuration\n' >&2
+  exit 65
+}
+
+MODE="${1:---status}"
+case "$MODE" in
+  --status|--dry-run|--run) ;;
+  *)
+    printf 'status=error reason=usage expected="--status|--dry-run|--run"\n' >&2
+    exit 64
+    ;;
+esac
+
+schedule_batch_recheck() {
+  local state_file job_label recorded_label recorded_snapshot started_at snapshot_file index job_info worker_pid attempt
+  state_file="$WATCHDOG_STATE_DIR/recheck-worker.tsv"
+
+  if [ -f "$state_file" ]; then
+    recorded_label=""
+    recorded_snapshot=""
+    IFS=$'\t' read -r recorded_label recorded_snapshot _ < "$state_file" || true
+    if [ -n "$recorded_label" ]; then
+      job_info="$(launchctl print "gui/$WATCHDOG_USER_ID/$recorded_label" 2>/dev/null)"
+      if printf '%s\n' "$job_info" | grep -q 'state = running'; then
+        worker_pid="$(printf '%s\n' "$job_info" | awk -F'= ' '/^[[:space:]]*pid =/{print $2; exit}')"
+        printf 'status=scheduled worker_pid=%s existing=1 count=%s\n' "${worker_pid:-unknown}" "${#ELIGIBLE_PIDS[@]}"
+        return 0
+      fi
+      launchctl remove "$recorded_label" >/dev/null 2>&1 || true
+    fi
+    case "$recorded_snapshot" in
+      "$WATCHDOG_STATE_DIR"/recheck-batch-*.tsv) rm -f "$recorded_snapshot" ;;
+    esac
+    rm -f "$state_file"
+  fi
+
+  mkdir -p "$WATCHDOG_STATE_DIR"
+  started_at="$(date +%s)"
+  snapshot_file="$WATCHDOG_STATE_DIR/recheck-batch-$started_at-$$.tsv"
+  : > "$snapshot_file"
+  for index in "${!ELIGIBLE_PIDS[@]}"; do
+    printf '%s\t%s\n' "${ELIGIBLE_PIDS[$index]}" "${ELIGIBLE_PATHS[$index]}" >> "$snapshot_file"
+  done
+
+  job_label="com.openai.codex.computer-use-watchdog.recheck.$started_at.$$"
+  if ! launchctl submit -l "$job_label" \
+    -o "$WATCHDOG_WORKER_OUTPUT" -e "$WATCHDOG_WORKER_ERROR" -- \
+    "$WATCHDOG_SCRIPT_DIR/computer-use-watchdog-recheck" \
+    "$snapshot_file" "$WATCHDOG_RECHECK_DELAY" "$job_label"; then
+    rm -f "$snapshot_file"
+    printf 'status=error reason=recheck-launch-failed count=%s\n' "${#ELIGIBLE_PIDS[@]}" >&2
+    watchdog_log_event "status=error reason=recheck-launch-failed count=${#ELIGIBLE_PIDS[@]}"
+    return 1
+  fi
+  printf '%s\t%s\t%s\n' "$job_label" "$snapshot_file" "$started_at" > "$state_file"
+
+  job_info=""
+  for attempt in 1 2 3 4 5 6 7 8 9 10; do
+    job_info="$(launchctl print "gui/$WATCHDOG_USER_ID/$job_label" 2>/dev/null)"
+    printf '%s\n' "$job_info" | grep -q 'state = running' && break
+    sleep 0.1
+  done
+  if ! printf '%s\n' "$job_info" | grep -q 'state = running'; then
+    launchctl remove "$job_label" >/dev/null 2>&1 || true
+    rm -f "$state_file"
+    rm -f "$snapshot_file"
+    printf 'status=error reason=recheck-launch-failed count=%s\n' "${#ELIGIBLE_PIDS[@]}" >&2
+    watchdog_log_event "status=error reason=recheck-launch-failed count=${#ELIGIBLE_PIDS[@]}"
+    return 1
+  fi
+  worker_pid="$(printf '%s\n' "$job_info" | awk -F'= ' '/^[[:space:]]*pid =/{print $2; exit}')"
+
+  printf 'status=scheduled worker_pid=%s count=%s recheck_after=%s\n' "${worker_pid:-unknown}" "${#ELIGIBLE_PIDS[@]}" "$WATCHDOG_RECHECK_DELAY"
+  watchdog_log_event "status=scheduled worker_pid=${worker_pid:-unknown} count=${#ELIGIBLE_PIDS[@]} recheck_after=$WATCHDOG_RECHECK_DELAY"
+}
+
+SERVICE_PIDS=()
+while IFS= read -r service_pid; do
+  [ -n "$service_pid" ] && SERVICE_PIDS+=("$service_pid")
+done < <(watchdog_find_service_pids)
+
+if [ "${#SERVICE_PIDS[@]}" -eq 0 ]; then
+  printf 'status=absent\n'
+  [ "$MODE" = "--run" ] && watchdog_log_event 'status=absent'
+  exit 0
+fi
+
+ELIGIBLE_PIDS=()
+ELIGIBLE_PATHS=()
+for pid in "${SERVICE_PIDS[@]}"; do
+  evaluation="$(watchdog_evaluate_pid "$pid")"
+  result=$?
+  printf '%s\n' "$evaluation"
+  if [ "$result" -eq 0 ]; then
+    service_path="$(watchdog_validate_identity "$pid")" || continue
+    ELIGIBLE_PIDS+=("$pid")
+    ELIGIBLE_PATHS+=("$service_path")
+  fi
+done
+
+if [ "${#ELIGIBLE_PIDS[@]}" -eq 0 ] || [ "$MODE" = "--status" ]; then
+  exit 0
+fi
+
+if [ "$MODE" = "--dry-run" ]; then
+  printf 'status=dry-run action=would-launch-one-batch-recheck count=%s recheck_after=%s\n' "${#ELIGIBLE_PIDS[@]}" "$WATCHDOG_RECHECK_DELAY"
+  exit 0
+fi
+
+schedule_batch_recheck

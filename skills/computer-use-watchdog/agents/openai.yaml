@@ -1,0 +1,4 @@
+interface:
+  display_name: "Computer Use Watchdog"
+  short_description: "空状態で高負荷なComputer Useを安全に終了します"
+  default_prompt: "Use $computer-use-watchdog to inspect Computer Use and create or update its recurring watchdog schedule."
