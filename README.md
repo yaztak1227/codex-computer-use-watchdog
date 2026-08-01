@@ -1,85 +1,56 @@
 # Codex Computer Use Watchdog
 
-macOS版CodexのComputer Use補助プロセス `SkyComputerUseService` が、利用終了後もクライアント不在のまま高負荷で残る場合に、安全条件を確認して終了するCodexスキルです。
+macOS版Codexで、利用終了後も高い負荷のまま残っているComputer Useを安全に終了するスキルです。
 
-プロセス監視だけでなく、Codexのスケジュール作成、実行間隔の変更、モデル変更、一時停止・再開・削除まで自然言語で管理できます。
+定期監視の作成や、実行間隔、使用モデルの変更もCodexへ自然な言葉で依頼できます。
 
-## 特徴
+## できること
 
-- Computer Useや画面キャプチャを使わずに負荷を判定
-- 実行ファイル、bundle ID、署名Team ID、所有ユーザーを検証
-- 接続中クライアントや子プロセスがある場合は何もしない
-- 1分後に再判定して、条件が変わっていない対象だけに `TERM` を送信
-- 対象が複数でも待機プロセスは常に1つ
-- `KILL` や広範な `pkill` は使用しない
-- 既定のスケジュールは10分ごと、`GPT-5.6 Luna`／推論「低」
+- 使用中のComputer Useには触れず、未使用の状態が続いている場合だけ終了
+- 既定では10分ごとに監視
+- 監視には軽量なGPT-5.6 Lunaを使用
+- 実行間隔の変更、一時停止、再開、削除に対応
+- 対象が複数あっても再確認は一括で実行
 
-## 必要環境
+## 必要なもの
 
 - macOS
 - Codex desktop app
-- Bash、`launchctl`、`ps`、`lsof`、`codesign`、`plutil`
+- Codexへ登録済みのローカルプロジェクト
 
-## Codexのskill-installerで導入する
+## インストール
 
-Codexに次のように依頼します。
-
-```text
-$skill-installer を使って、GitHubリポジトリ yaztak1227/codex-computer-use-watchdog の skills/computer-use-watchdog をインストールして
-```
-
-またはGitHub URLを直接指定できます。
+Codexへ次のように依頼します。
 
 ```text
 $skill-installer を使って https://github.com/yaztak1227/codex-computer-use-watchdog/tree/main/skills/computer-use-watchdog をインストールして
 ```
 
-インストール完了後、次のターンからスキルが利用できます。必要に応じてCodexを再起動してください。
+インストールしたスキルは次のターンから利用できます。
+見つからない場合はCodexを再起動してください。
 
-## 同梱インストーラで導入する
+## 定期監視を作成する
 
-リポジトリを取得し、次を実行します。
-
-```bash
-./install.sh
-```
-
-既定では `${CODEX_HOME:-$HOME/.codex}/skills/computer-use-watchdog` にインストールします。
-
-別のCodexホームへ入れる場合:
-
-```bash
-./install.sh --codex-home "$HOME/.codex_lb"
-```
-
-既存インストールを更新する場合:
-
-```bash
-./install.sh --force
-```
-
-`--force` は既存スキルを `$CODEX_HOME/skill-backups` へバックアップしてから更新します。バックアップをスキル検索対象から分離するため、古い版が重複検出されません。
-
-## スケジューラを作成する
-
-スキルを導入した次のターンで、Codexへ依頼します。
-
-```text
-Computer Use watchdogを10分ごとに動かすスケジュールを作って。監視だけGPT-5.6 Luna、推論は低にして
-```
-
-短くても構いません。
+インストール後、Codexへ次のように依頼します。
 
 ```text
 Computer Use watchdogの定期監視を作って
 ```
 
-スキルは既定で、10分間隔・Luna・低推論・異常時のみ通知する独立ローカルスケジュールを作成します。スケジュールの保存先として、Codexに登録済みのローカルプロジェクトが1つ必要です。
+既定では10分間隔、GPT-5.6 Luna、推論「低」、異常時のみ通知する設定で作成されます。
 
-## スケジュールを変更する
+設定を指定することもできます。
 
 ```text
-Computer Use watchdogを30分ごとに変更して
+Computer Use watchdogを30分ごとに動かして
+```
+
+## 設定を変更する
+
+作成後の変更もCodexへ依頼できます。
+
+```text
+Computer Use watchdogを10分ごとに変更して
 ```
 
 ```text
@@ -94,42 +65,37 @@ Computer Use watchdogを一時停止して
 Computer Use watchdogを再開して
 ```
 
-既存のプロンプト、通知条件、プロジェクトなど、依頼されていない設定は維持されます。
-
-## 手動確認
-
-インストール先のスキルディレクトリで実行します。
-
-```bash
-/bin/bash scripts/computer-use-watchdog --status
-/bin/bash scripts/computer-use-watchdog --dry-run
-/bin/bash scripts/computer-use-watchdog --run
+```text
+Computer Use watchdogを削除して
 ```
 
-- `--status`: 読み取り専用の状態確認
-- `--dry-run`: 終了候補を判定するが、状態保存やシグナル送信はしない
-- `--run`: 候補があれば1つの再確認プロセスを起動して即終了
+## 手動でインストールする
 
-## 調整項目
+GitHubから取得して、同梱のインストーラを実行します。
 
-環境変数でしきい値を変更できます。
+```bash
+git clone https://github.com/yaztak1227/codex-computer-use-watchdog.git
+cd codex-computer-use-watchdog
+./install.sh
+```
 
-| 変数 | 既定値 | 内容 |
-| --- | ---: | --- |
-| `CU_WATCHDOG_MIN_AGE_SECONDS` | `60` | 対象にする最小プロセス経過時間 |
-| `CU_WATCHDOG_RECHECK_DELAY_SECONDS` | `60` | 再確認までの待機秒数 |
-| `CU_WATCHDOG_MIN_CPU` | `2.0` | 平均CPU使用率の下限 |
-| `CU_WATCHDOG_STATE_DIR` | macOS Application Support配下 | 状態とログの保存先 |
+すでにインストールしているスキルを更新する場合は、次のように実行します。
+
+```bash
+./install.sh --force
+```
 
 ## 安全性
 
-このスキルはOpenAI署名のComputer Useサービスだけを対象にし、クライアント不在・子プロセスなし・経過時間・CPU負荷を二度確認します。終了要求は `TERM` のみで、応答しないプロセスを強制終了しません。
+このスキルは、Computer Useが使われていないことを時間を空けて二度確認します。
+使用中と判断した場合は何もしません。
+終了できない場合も強制終了は行いません。
 
-最初は `--status` または `--dry-run` で挙動を確認してください。
+最初に状態だけ確認したい場合は、Codexへ次のように依頼できます。
 
-## プライバシー
-
-配布物にはローカルのユーザー名、ホームディレクトリ、メールアドレス、タスクIDなどを含めていません。実際にCodexがローカルスケジュールを生成すると、その端末上の設定にはインストール済みスクリプトの絶対パスが保存されますが、リポジトリへ送信されることはありません。
+```text
+Computer Use watchdogで状態だけ確認して。プロセスは終了しないで
+```
 
 ## License
 

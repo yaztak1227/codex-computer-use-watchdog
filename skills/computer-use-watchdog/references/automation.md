@@ -26,8 +26,6 @@ Computer Useや画面キャプチャは呼ばず、/bin/bash {absolute-skill-dir
 
 Always invoke the script through `/bin/bash`. GitHub archive downloads used by `skill-installer` may not preserve executable bits.
 
-Do not place local usernames, thread IDs, or machine-specific paths in the distributed skill or README. A generated local automation may necessarily contain the local installed path.
-
 ## Create
 
 1. Search for the automation-management tool before doing anything else.
@@ -68,6 +66,4 @@ After every write:
 1. Re-read the automation through the tool or persisted configuration.
 2. Confirm the kind, cadence, model, reasoning effort, notification policy, project, and script path.
 3. Ensure the prompt invokes neither Computer Use nor screen capture.
-4. Ensure no personal path or identifier has entered the distributed repository.
-
 For process testing, prefer `--status` or `--dry-run`. Do not run `--run` merely to validate scheduling syntax.
