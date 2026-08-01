@@ -21,8 +21,10 @@ Prefer a standalone local scheduled task because it can pin a lightweight model 
 The saved prompt must use the installed skill's resolved absolute script path, not a path copied from documentation:
 
 ```text
-Computer Useや画面キャプチャは呼ばず、{absolute-skill-directory}/scripts/computer-use-watchdog --run を1回だけ実行する。スクリプトは変更しない。status=errorの場合だけ理由と結果を簡潔に報告し、それ以外は追加作業を行わず静かに終了する。
+Computer Useや画面キャプチャは呼ばず、/bin/bash {absolute-skill-directory}/scripts/computer-use-watchdog --run を1回だけ実行する。スクリプトは変更しない。status=errorの場合だけ理由と結果を簡潔に報告し、それ以外は追加作業を行わず静かに終了する。
 ```
+
+Always invoke the script through `/bin/bash`. GitHub archive downloads used by `skill-installer` may not preserve executable bits.
 
 Do not place local usernames, thread IDs, or machine-specific paths in the distributed skill or README. A generated local automation may necessarily contain the local installed path.
 

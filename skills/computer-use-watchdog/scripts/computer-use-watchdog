@@ -53,7 +53,7 @@ schedule_batch_recheck() {
   job_label="com.openai.codex.computer-use-watchdog.recheck.$started_at.$$"
   if ! launchctl submit -l "$job_label" \
     -o "$WATCHDOG_WORKER_OUTPUT" -e "$WATCHDOG_WORKER_ERROR" -- \
-    "$WATCHDOG_SCRIPT_DIR/computer-use-watchdog-recheck" \
+    /bin/bash "$WATCHDOG_SCRIPT_DIR/computer-use-watchdog-recheck" \
     "$snapshot_file" "$WATCHDOG_RECHECK_DELAY" "$job_label"; then
     rm -f "$snapshot_file"
     printf 'status=error reason=recheck-launch-failed count=%s\n' "${#ELIGIBLE_PIDS[@]}" >&2

@@ -101,9 +101,9 @@ Computer Use watchdogを再開して
 インストール先のスキルディレクトリで実行します。
 
 ```bash
-scripts/computer-use-watchdog --status
-scripts/computer-use-watchdog --dry-run
-scripts/computer-use-watchdog --run
+/bin/bash scripts/computer-use-watchdog --status
+/bin/bash scripts/computer-use-watchdog --dry-run
+/bin/bash scripts/computer-use-watchdog --run
 ```
 
 - `--status`: 読み取り専用の状態確認

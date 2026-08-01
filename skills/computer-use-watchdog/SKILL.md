@@ -12,9 +12,9 @@ Use the bundled scripts for process decisions. Never invoke Computer Use or scre
 Resolve this installed skill directory and run one of:
 
 ```bash
-scripts/computer-use-watchdog --status
-scripts/computer-use-watchdog --dry-run
-scripts/computer-use-watchdog --run
+/bin/bash scripts/computer-use-watchdog --status
+/bin/bash scripts/computer-use-watchdog --dry-run
+/bin/bash scripts/computer-use-watchdog --run
 ```
 
 - Use `--status` for a read-only snapshot.
@@ -36,7 +36,7 @@ For a new installation, default to:
 - `gpt-5.6-luna` with `low` reasoning when available; otherwise the smallest available model with `low` reasoning
 - local execution in the user's selected project
 - failed-run notifications only
-- one call to this skill's absolute `scripts/computer-use-watchdog --run` path
+- one `/bin/bash` call with this skill's absolute `scripts/computer-use-watchdog --run` path
 
 Resolve a local project with the project-listing tool before creating a standalone task. If there is no suitable saved local project, ask the user to select or add one; do not silently choose an unrelated project.
 
