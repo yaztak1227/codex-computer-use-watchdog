@@ -1,0 +1,78 @@
+#!/bin/bash
+set -u
+set -o pipefail
+
+MODE="${1:---run}"
+case "$MODE" in
+  --run|--dry-run) ;;
+  *)
+    printf 'status=error reason=usage expected="--run|--dry-run"\n' >&2
+    exit 64
+    ;;
+esac
+
+EXPECTED_CONFIRMATION="computer-use-watchdog"
+EXPECTED_TITLE="Computer Use watchdog"
+CONFIRMATION="${CU_WATCHDOG_DELETE_CURRENT_THREAD:-}"
+THREAD_ID="${CODEX_THREAD_ID:-}"
+WATCHDOG_CODEX_HOME="${CODEX_HOME:-}"
+
+if [ "$CONFIRMATION" != "$EXPECTED_CONFIRMATION" ]; then
+  printf 'status=error reason=delete-not-confirmed\n' >&2
+  exit 65
+fi
+
+if ! [[ "$THREAD_ID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
+  printf 'status=error reason=invalid-thread-id\n' >&2
+  exit 65
+fi
+
+if [ -z "$WATCHDOG_CODEX_HOME" ] || [ ! -d "$WATCHDOG_CODEX_HOME" ]; then
+  printf 'status=error reason=invalid-codex-home\n' >&2
+  exit 65
+fi
+
+STATE_DB="$WATCHDOG_CODEX_HOME/state_5.sqlite"
+if [ ! -f "$STATE_DB" ] || ! command -v sqlite3 >/dev/null 2>&1; then
+  printf 'status=error reason=thread-catalog-unavailable\n' >&2
+  exit 66
+fi
+
+THREAD_TITLE="$(sqlite3 -readonly "$STATE_DB" "SELECT title FROM threads WHERE id='$THREAD_ID' LIMIT 1;" 2>/dev/null)"
+if [ "$THREAD_TITLE" != "$EXPECTED_TITLE" ]; then
+  printf 'status=error reason=thread-title-mismatch\n' >&2
+  exit 67
+fi
+
+resolve_codex_binary() {
+  local candidate
+  for candidate in \
+    "${CU_WATCHDOG_CODEX_BIN:-}" \
+    "/Applications/Codex.app/Contents/Resources/codex" \
+    "$HOME/Applications/Codex.app/Contents/Resources/codex" \
+    "$HOME/Applications/CodexLB.app/Contents/Resources/codex"; do
+    if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+
+  candidate="$(command -v codex 2>/dev/null)"
+  if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+    printf '%s\n' "$candidate"
+    return 0
+  fi
+  return 1
+}
+
+CODEX_BIN="$(resolve_codex_binary)" || {
+  printf 'status=error reason=codex-cli-unavailable\n' >&2
+  exit 69
+}
+
+if [ "$MODE" = "--dry-run" ]; then
+  printf 'status=dry-run action=delete-current-thread thread_id=%s title=%q codex_bin=%q\n' "$THREAD_ID" "$THREAD_TITLE" "$CODEX_BIN"
+  exit 0
+fi
+
+"$CODEX_BIN" delete "$THREAD_ID" --force

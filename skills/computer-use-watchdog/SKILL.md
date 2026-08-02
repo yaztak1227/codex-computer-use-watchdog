@@ -38,6 +38,7 @@ For a new installation, default to:
 - failed-run notifications only
 - permanently delete each standalone scheduled-run task after it finishes
 - one `/bin/bash` call with this skill's absolute `scripts/computer-use-watchdog --run` path
+- one guarded `/bin/bash` call to `scripts/delete-current-watchdog-thread --run` as the final action
 
 Resolve a local project with the project-listing tool before creating a standalone task. If there is no suitable saved local project, ask the user to select or add one; do not silently choose an unrelated project.
 
@@ -48,7 +49,7 @@ When updating an existing automation:
 3. Send the full updated field set required by the tool.
 4. Verify the persisted configuration after the update.
 
-For automatic run cleanup, resolve the `codex` binary bundled with the currently running macOS app. Use that binary rather than an older CLI from `PATH`, validate `CODEX_THREAD_ID` as a UUID, and delete only that UUID with `codex delete <UUID> --force` as the final action. Never delete by repeated task name.
+For automatic run cleanup, invoke the bundled `scripts/delete-current-watchdog-thread --run` helper with `CU_WATCHDOG_DELETE_CURRENT_THREAD=computer-use-watchdog` as the final action. The helper validates the confirmation token, `CODEX_THREAD_ID`, and the exact thread title before deleting by UUID. Never delete by repeated task name.
 
 Keep a thread heartbeat only when the user explicitly needs existing-chat continuity. A heartbeat may inherit the chat model and may not support a pinned model. Explain that limitation before converting between heartbeat and standalone scheduling.
 

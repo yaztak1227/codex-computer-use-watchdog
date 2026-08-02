@@ -71,7 +71,8 @@ trap cleanup_stage EXIT
 cp -R "$SOURCE_SKILL_DIR/." "$STAGE_DIR/"
 chmod +x "$STAGE_DIR/scripts/computer-use-watchdog" \
   "$STAGE_DIR/scripts/computer-use-watchdog-lib" \
-  "$STAGE_DIR/scripts/computer-use-watchdog-recheck"
+  "$STAGE_DIR/scripts/computer-use-watchdog-recheck" \
+  "$STAGE_DIR/scripts/delete-current-watchdog-thread"
 
 [ -f "$STAGE_DIR/SKILL.md" ] && [ -x "$STAGE_DIR/scripts/computer-use-watchdog" ] || {
   printf '%s\n' 'Staged skill validation failed.' >&2

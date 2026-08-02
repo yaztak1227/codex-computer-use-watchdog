@@ -17,16 +17,15 @@ Prefer a standalone local scheduled task because it can pin a lightweight model 
 - `notificationPolicy`: failed runs only
 - `status`: active
 - `rrule`: ten-minute interval unless the user provides another cadence
-- `codexAppCli`: the `codex` binary bundled with the currently running macOS app
 
 The saved prompt must use the installed skill's resolved absolute script path, not a path copied from documentation:
 
 ```text
-Computer Useや画面キャプチャは呼ばず、/bin/bash {absolute-skill-directory}/scripts/computer-use-watchdog --run を1回だけ実行する。スクリプトは変更しない。status=errorの場合だけ理由と結果を簡潔に報告し、それ以外は追加作業を行わず静かに終了する。処理の最後に、環境変数CODEX_THREAD_IDがUUID形式であることを確認してから、{absolute-codex-app-cli} delete "$CODEX_THREAD_ID" --force を1回だけ実行し、このスケジュール実行で作成された現在のタスクを完全削除する。名前指定や他タスクの削除は行わず、アーカイブもしない。
+Computer Useや画面キャプチャは呼ばず、/bin/bash {absolute-skill-directory}/scripts/computer-use-watchdog --run を1回だけ実行する。スクリプトは変更しない。status=errorの場合だけ理由と結果を簡潔に報告し、それ以外は追加作業を行わず静かに終了する。処理の最後に、CU_WATCHDOG_DELETE_CURRENT_THREAD=computer-use-watchdog /bin/bash {absolute-skill-directory}/scripts/delete-current-watchdog-thread --run を1回だけ実行し、このスケジュール実行で作成された現在のタスクを完全削除する。名前指定や他タスクの削除は行わず、アーカイブもしない。
 ```
 
 Always invoke the script through `/bin/bash`. GitHub archive downloads used by `skill-installer` may not preserve executable bits.
-Resolve the app-bundled CLI before saving the prompt. Do not use an older `codex` binary from `PATH`; state-format mismatches can make deletion fail.
+The deletion helper resolves the app-bundled CLI before falling back to `PATH`; state-format mismatches can make an older CLI fail.
 
 ## Create
 
@@ -68,5 +67,5 @@ After every write:
 1. Re-read the automation through the tool or persisted configuration.
 2. Confirm the kind, cadence, model, reasoning effort, notification policy, project, and script path.
 3. Ensure the prompt invokes neither Computer Use nor screen capture.
-4. Ensure a standalone task validates `CODEX_THREAD_ID` and permanently deletes only its own scheduled run after completion.
+4. Ensure a standalone task invokes the guarded deletion helper only after the watchdog command finishes.
 For process testing, prefer `--status` or `--dry-run`. Do not run `--run` merely to validate scheduling syntax.
