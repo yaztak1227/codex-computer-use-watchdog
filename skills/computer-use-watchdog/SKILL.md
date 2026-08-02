@@ -36,6 +36,7 @@ For a new installation, default to:
 - `gpt-5.6-luna` with `low` reasoning when available; otherwise the smallest available model with `low` reasoning
 - local execution in the user's selected project
 - failed-run notifications only
+- archive each standalone scheduled-run task after it finishes
 - one `/bin/bash` call with this skill's absolute `scripts/computer-use-watchdog --run` path
 
 Resolve a local project with the project-listing tool before creating a standalone task. If there is no suitable saved local project, ask the user to select or add one; do not silently choose an unrelated project.

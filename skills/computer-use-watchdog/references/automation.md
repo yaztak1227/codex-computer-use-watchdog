@@ -21,7 +21,7 @@ Prefer a standalone local scheduled task because it can pin a lightweight model 
 The saved prompt must use the installed skill's resolved absolute script path, not a path copied from documentation:
 
 ```text
-Computer Useや画面キャプチャは呼ばず、/bin/bash {absolute-skill-directory}/scripts/computer-use-watchdog --run を1回だけ実行する。スクリプトは変更しない。status=errorの場合だけ理由と結果を簡潔に報告し、それ以外は追加作業を行わず静かに終了する。
+Computer Useや画面キャプチャは呼ばず、/bin/bash {absolute-skill-directory}/scripts/computer-use-watchdog --run を1回だけ実行する。スクリプトは変更しない。status=errorの場合だけ理由と結果を簡潔に報告し、それ以外は追加作業を行わず静かに終了する。処理後はタスク管理機能を使い、このスケジュール実行で作成された現在のタスクだけをアーカイブする。元のユーザータスクや他のタスクはアーカイブしない。
 ```
 
 Always invoke the script through `/bin/bash`. GitHub archive downloads used by `skill-installer` may not preserve executable bits.
@@ -66,4 +66,5 @@ After every write:
 1. Re-read the automation through the tool or persisted configuration.
 2. Confirm the kind, cadence, model, reasoning effort, notification policy, project, and script path.
 3. Ensure the prompt invokes neither Computer Use nor screen capture.
+4. Ensure a standalone task archives only its own scheduled run after completion.
 For process testing, prefer `--status` or `--dry-run`. Do not run `--run` merely to validate scheduling syntax.
