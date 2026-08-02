@@ -49,7 +49,7 @@ When updating an existing automation:
 3. Send the full updated field set required by the tool.
 4. Verify the persisted configuration after the update.
 
-For automatic run cleanup, invoke the bundled `scripts/delete-current-watchdog-thread --run` helper with `CU_WATCHDOG_DELETE_CURRENT_THREAD=computer-use-watchdog` as the final action. The helper validates the confirmation token, `CODEX_THREAD_ID`, and the exact thread title before deleting by UUID. Never delete by repeated task name.
+For automatic run cleanup, invoke the bundled `scripts/delete-current-watchdog-thread --run` helper with `CU_WATCHDOG_DELETE_CURRENT_THREAD=computer-use-watchdog` as the final action. The helper uses `CODEX_THREAD_ID` when it is a valid matching automation UUID; otherwise it requires exactly one recent, unarchived thread whose stored automation name and automation ID both match. It then schedules a delayed deletion by that UUID so the automation turn can finish first. Never delete by repeated task name.
 
 Keep a thread heartbeat only when the user explicitly needs existing-chat continuity. A heartbeat may inherit the chat model and may not support a pinned model. Explain that limitation before converting between heartbeat and standalone scheduling.
 

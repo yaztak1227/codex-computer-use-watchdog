@@ -4,7 +4,7 @@ set -o pipefail
 
 MODE="${1:---run}"
 case "$MODE" in
-  --run|--dry-run) ;;
+  --run|--dry-run|--delete-id) ;;
   *)
     printf 'status=error reason=usage expected="--run|--dry-run"\n' >&2
     exit 64
@@ -12,18 +12,26 @@ case "$MODE" in
 esac
 
 EXPECTED_CONFIRMATION="computer-use-watchdog"
-EXPECTED_TITLE="Computer Use watchdog"
+EXPECTED_AUTOMATION_NAME="Computer Use watchdog"
+EXPECTED_AUTOMATION_ID="computer-use-watchdog"
 CONFIRMATION="${CU_WATCHDOG_DELETE_CURRENT_THREAD:-}"
-THREAD_ID="${CODEX_THREAD_ID:-}"
 WATCHDOG_CODEX_HOME="${CODEX_HOME:-}"
+DISCOVERY_WINDOW_SECONDS=300
+DELETE_DELAY_SECONDS=10
+LAUNCHD_LABEL="${CU_WATCHDOG_LAUNCHD_LABEL:-}"
+
+cleanup_launchd_job() {
+  if [ -n "$LAUNCHD_LABEL" ] && command -v launchctl >/dev/null 2>&1; then
+    launchctl remove "$LAUNCHD_LABEL" >/dev/null 2>&1 || true
+  fi
+}
+
+if [ "$MODE" = "--delete-id" ] && [ -n "$LAUNCHD_LABEL" ]; then
+  trap cleanup_launchd_job EXIT
+fi
 
 if [ "$CONFIRMATION" != "$EXPECTED_CONFIRMATION" ]; then
   printf 'status=error reason=delete-not-confirmed\n' >&2
-  exit 65
-fi
-
-if ! [[ "$THREAD_ID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then
-  printf 'status=error reason=invalid-thread-id\n' >&2
   exit 65
 fi
 
@@ -38,11 +46,38 @@ if [ ! -f "$STATE_DB" ] || ! command -v sqlite3 >/dev/null 2>&1; then
   exit 66
 fi
 
-THREAD_TITLE="$(sqlite3 -readonly "$STATE_DB" "SELECT title FROM threads WHERE id='$THREAD_ID' LIMIT 1;" 2>/dev/null)"
-if [ "$THREAD_TITLE" != "$EXPECTED_TITLE" ]; then
-  printf 'status=error reason=thread-title-mismatch\n' >&2
-  exit 67
-fi
+is_uuid() {
+  [[ "$1" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]
+}
+
+automation_match_sql() {
+  printf "%s" "thread_source='automation' AND archived=0 AND first_user_message LIKE 'Automation: ${EXPECTED_AUTOMATION_NAME}' || char(10) || 'Automation ID: ${EXPECTED_AUTOMATION_ID}' || char(10) || '%'"
+}
+
+is_watchdog_thread() {
+  local thread_id="$1"
+  local match_count
+  match_count="$(sqlite3 -readonly "$STATE_DB" "SELECT COUNT(*) FROM threads WHERE id='$thread_id' AND $(automation_match_sql);" 2>/dev/null)"
+  [ "$match_count" = "1" ]
+}
+
+discover_current_thread_id() {
+  local match_sql
+  local candidate_count
+  local candidate_id
+  match_sql="$(automation_match_sql) AND created_at >= CAST(strftime('%s','now') AS INTEGER) - $DISCOVERY_WINDOW_SECONDS"
+  candidate_count="$(sqlite3 -readonly "$STATE_DB" "SELECT COUNT(*) FROM threads WHERE $match_sql;" 2>/dev/null)"
+  if [ "$candidate_count" != "1" ]; then
+    printf 'status=error reason=current-thread-not-unique candidates=%s\n' "${candidate_count:-unknown}" >&2
+    return 1
+  fi
+  candidate_id="$(sqlite3 -readonly "$STATE_DB" "SELECT id FROM threads WHERE $match_sql LIMIT 1;" 2>/dev/null)"
+  if ! is_uuid "$candidate_id"; then
+    printf 'status=error reason=invalid-discovered-thread-id\n' >&2
+    return 1
+  fi
+  printf '%s\n' "$candidate_id"
+}
 
 resolve_codex_binary() {
   local candidate
@@ -65,14 +100,55 @@ resolve_codex_binary() {
   return 1
 }
 
+if [ "$MODE" = "--delete-id" ]; then
+  THREAD_ID="${2:-}"
+  if ! is_uuid "$THREAD_ID" || ! is_watchdog_thread "$THREAD_ID"; then
+    printf 'status=error reason=thread-identity-mismatch\n' >&2
+    exit 67
+  fi
+  sleep "$DELETE_DELAY_SECONDS"
+  if ! is_watchdog_thread "$THREAD_ID"; then
+    printf 'status=error reason=thread-identity-changed\n' >&2
+    exit 67
+  fi
+  CODEX_BIN="$(resolve_codex_binary)" || {
+    printf 'status=error reason=codex-cli-unavailable\n' >&2
+    exit 69
+  }
+  "$CODEX_BIN" delete "$THREAD_ID" --force
+  exit $?
+fi
+
+THREAD_ID="${CODEX_THREAD_ID:-}"
+THREAD_SELECTOR="environment"
+if ! is_uuid "$THREAD_ID" || ! is_watchdog_thread "$THREAD_ID"; then
+  THREAD_ID="$(discover_current_thread_id)" || exit $?
+  THREAD_SELECTOR="catalog"
+fi
+
 CODEX_BIN="$(resolve_codex_binary)" || {
   printf 'status=error reason=codex-cli-unavailable\n' >&2
   exit 69
 }
 
 if [ "$MODE" = "--dry-run" ]; then
-  printf 'status=dry-run action=delete-current-thread thread_id=%s title=%q codex_bin=%q\n' "$THREAD_ID" "$THREAD_TITLE" "$CODEX_BIN"
+  printf 'status=dry-run action=schedule-delete-current-thread thread_id=%s selector=%s codex_bin=%q delay_seconds=%s\n' "$THREAD_ID" "$THREAD_SELECTOR" "$CODEX_BIN" "$DELETE_DELAY_SECONDS"
   exit 0
 fi
 
-"$CODEX_BIN" delete "$THREAD_ID" --force
+SCRIPT_DIR="$(cd -- "$(dirname -- "$0")" && pwd)"
+SCRIPT_PATH="$SCRIPT_DIR/$(basename -- "$0")"
+if ! command -v launchctl >/dev/null 2>&1; then
+  printf 'status=error reason=launchctl-unavailable\n' >&2
+  exit 69
+fi
+
+JOB_LABEL="com.openai.codex.computer-use-watchdog.delete.$THREAD_ID"
+launchctl submit -l "$JOB_LABEL" -- /usr/bin/env \
+  "CU_WATCHDOG_DELETE_CURRENT_THREAD=$EXPECTED_CONFIRMATION" \
+  "CU_WATCHDOG_CODEX_BIN=$CODEX_BIN" \
+  "CODEX_HOME=$WATCHDOG_CODEX_HOME" \
+  "CU_WATCHDOG_LAUNCHD_LABEL=$JOB_LABEL" \
+  /bin/bash "$SCRIPT_PATH" --delete-id "$THREAD_ID"
+
+printf 'status=scheduled action=delete-current-thread thread_id=%s selector=%s delay_seconds=%s job_label=%s\n' "$THREAD_ID" "$THREAD_SELECTOR" "$DELETE_DELAY_SECONDS" "$JOB_LABEL"
