@@ -15,7 +15,10 @@ EXPECTED_CONFIRMATION="computer-use-watchdog"
 EXPECTED_AUTOMATION_NAME="Computer Use watchdog"
 EXPECTED_AUTOMATION_ID="computer-use-watchdog"
 CONFIRMATION="${CU_WATCHDOG_DELETE_CURRENT_THREAD:-}"
-WATCHDOG_CODEX_HOME="${CODEX_HOME:-}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "$0")" && pwd)"
+SCRIPT_PATH="$SCRIPT_DIR/$(basename -- "$0")"
+INSTALLED_CODEX_HOME="$(cd -- "$SCRIPT_DIR/../../.." && pwd)"
+WATCHDOG_CODEX_HOME="${CU_WATCHDOG_CODEX_HOME:-$INSTALLED_CODEX_HOME}"
 DISCOVERY_WINDOW_SECONDS=300
 DELETE_DELAY_SECONDS=10
 LAUNCHD_LABEL="${CU_WATCHDOG_LAUNCHD_LABEL:-}"
@@ -115,7 +118,7 @@ if [ "$MODE" = "--delete-id" ]; then
     printf 'status=error reason=codex-cli-unavailable\n' >&2
     exit 69
   }
-  "$CODEX_BIN" delete "$THREAD_ID" --force
+  CODEX_HOME="$WATCHDOG_CODEX_HOME" "$CODEX_BIN" delete "$THREAD_ID" --force
   exit $?
 fi
 
@@ -136,8 +139,6 @@ if [ "$MODE" = "--dry-run" ]; then
   exit 0
 fi
 
-SCRIPT_DIR="$(cd -- "$(dirname -- "$0")" && pwd)"
-SCRIPT_PATH="$SCRIPT_DIR/$(basename -- "$0")"
 if ! command -v launchctl >/dev/null 2>&1; then
   printf 'status=error reason=launchctl-unavailable\n' >&2
   exit 69
@@ -147,7 +148,7 @@ JOB_LABEL="com.openai.codex.computer-use-watchdog.delete.$THREAD_ID"
 launchctl submit -l "$JOB_LABEL" -- /usr/bin/env \
   "CU_WATCHDOG_DELETE_CURRENT_THREAD=$EXPECTED_CONFIRMATION" \
   "CU_WATCHDOG_CODEX_BIN=$CODEX_BIN" \
-  "CODEX_HOME=$WATCHDOG_CODEX_HOME" \
+  "CU_WATCHDOG_CODEX_HOME=$WATCHDOG_CODEX_HOME" \
   "CU_WATCHDOG_LAUNCHD_LABEL=$JOB_LABEL" \
   /bin/bash "$SCRIPT_PATH" --delete-id "$THREAD_ID"
 
